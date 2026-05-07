@@ -1,0 +1,166 @@
+name: Build And Deploy Omproxy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/nordopssolutions/omproxy
+  DEPLOY_PATH: /opt/omproxy
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test:
+    name: Test Go Application
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Run tests
+        run: go test ./...
+
+  container:
+    name: Build And Push Container
+    runs-on: ubuntu-latest
+    needs:
+      - test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+            type=ref,event=branch
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  deploy:
+    name: Deploy To Hetzner
+    runs-on: ubuntu-latest
+    needs:
+      - container
+    env:
+      GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure server filesystem state
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: ${{ secrets.HETZNER_USER }}
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            mkdir -p /opt/omproxy
+
+      - name: Copy deploy files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: ${{ secrets.HETZNER_USER }}
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          source: "deploy/docker-compose.yml,deploy/config.example.toml"
+          target: "/opt/omproxy"
+          strip_components: 1
+          overwrite: true
+
+      - name: Deploy container on server
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          GHCR_USERNAME: ${{ env.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ env.GHCR_TOKEN }}
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: ${{ secrets.HETZNER_USER }}
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          envs: GHCR_USERNAME,GHCR_TOKEN
+          script: |
+            set -euo pipefail
+            cd /opt/omproxy
+
+            if [ ! -f config.toml ]; then
+              cp config.example.toml config.toml
+              echo "Created /opt/omproxy/config.toml from template. Fill [database] credentials and rerun workflow."
+              exit 1
+            fi
+
+            if [ -n "${GHCR_USERNAME:-}" ] && [ -n "${GHCR_TOKEN:-}" ]; then
+              echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+            else
+              echo "GHCR credentials are not set. Pull may fail for private images."
+            fi
+
+            docker compose pull
+
+            # Schema is created idempotently at process startup via cache.InitSchema().
+            # No separate migrate step is needed.
+            docker compose up -d --remove-orphans
+
+            container_id="$(docker compose ps -q omproxy)"
+            if [ -z "${container_id}" ]; then
+              echo "Omproxy container was not started."
+              exit 1
+            fi
+
+            echo "Waiting for omproxy healthcheck to report healthy..."
+            for i in $(seq 1 24); do
+              health_status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "${container_id}")"
+              echo "omproxy health status: ${health_status}"
+              if [ "${health_status}" = "healthy" ]; then
+                break
+              fi
+              sleep 5
+            done
+
+            final_health_status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "${container_id}")"
+            if [ "${final_health_status}" != "healthy" ]; then
+              echo "Omproxy is not healthy after waiting."
+              docker compose logs --tail=200 omproxy
+              exit 1
+            fi
+
+            docker compose ps

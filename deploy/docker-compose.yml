@@ -1,0 +1,24 @@
+services:
+  omproxy:
+    image: ghcr.io/nordopssolutions/omproxy:${IMAGE_TAG:-latest}
+    container_name: meteo-omproxy
+    restart: unless-stopped
+    networks:
+      - proxy-net
+    volumes:
+      - ./config.toml:/app/config.toml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  proxy-net:
+    external: true
