@@ -40,7 +40,8 @@ hourly = [
   "vapour_pressure_deficit",
   "soil_temperature_6cm",
   "soil_moisture_1_to_3cm",
-  "shortwave_radiation"
+  "shortwave_radiation",
+  "is_day"
 ]
 
 daily = [
@@ -52,5 +53,7 @@ daily = [
   "wind_speed_10m_max",
   "wind_gusts_10m_max",
   "et0_fao_evapotranspiration",
-  "shortwave_radiation_sum"
+  "shortwave_radiation_sum",
+  "sunrise",
+  "sunset"
 ]
