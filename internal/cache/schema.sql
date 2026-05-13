@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS weather_api_cache (
     cache_key text PRIMARY KEY,
-    kind text NOT NULL CHECK (kind IN ('hourly', 'daily')),
+    kind text NOT NULL CHECK (kind IN ('hourly', 'daily', 'archive')),
     lat double precision NOT NULL,
     lon double precision NOT NULL,
     forecast_days integer NOT NULL,
@@ -11,6 +11,12 @@ CREATE TABLE IF NOT EXISTS weather_api_cache (
     expires_at timestamptz NOT NULL,
     source_url text NOT NULL
 );
+
+-- Widen the kind check on pre-existing installs so 'archive' is accepted.
+-- DROP IF EXISTS + ADD makes this idempotent across restarts.
+ALTER TABLE weather_api_cache DROP CONSTRAINT IF EXISTS weather_api_cache_kind_check;
+ALTER TABLE weather_api_cache ADD CONSTRAINT weather_api_cache_kind_check
+    CHECK (kind IN ('hourly', 'daily', 'archive'));
 
 CREATE INDEX IF NOT EXISTS weather_api_cache_expires_at_idx
     ON weather_api_cache (expires_at);

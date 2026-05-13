@@ -62,7 +62,7 @@ func main() {
 
 	cacheStore := cache.New(pool)
 	statsStore := stats.New(pool)
-	openMeteoClient := openmeteo.New(cfg.OpenMeteo.BaseURL, cfg.OpenMeteo.RequestTimeout.Duration)
+	openMeteoClient := openmeteo.New(cfg.OpenMeteo.BaseURL, cfg.OpenMeteo.ArchiveBaseURL, cfg.OpenMeteo.RequestTimeout.Duration)
 	weatherService := service.NewWeather(cfg, cacheStore, statsStore, openMeteoClient)
 	api := httpapi.New(weatherService, statsStore, logger)
 

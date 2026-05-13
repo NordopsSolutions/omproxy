@@ -41,6 +41,7 @@ type ServerConfig struct {
 
 type OpenMeteoConfig struct {
 	BaseURL        string   `toml:"base_url"`
+	ArchiveBaseURL string   `toml:"archive_base_url"`
 	Timezone       string   `toml:"timezone"`
 	ForecastDays   int      `toml:"forecast_days"`
 	RequestTimeout Duration `toml:"request_timeout"`
@@ -90,6 +91,7 @@ func defaults() Config {
 		},
 		OpenMeteo: OpenMeteoConfig{
 			BaseURL:        "https://api.open-meteo.com/v1/forecast",
+			ArchiveBaseURL: "https://archive-api.open-meteo.com/v1/archive",
 			Timezone:       "Europe/Bucharest",
 			ForecastDays:   7,
 			RequestTimeout: Duration{20 * time.Second},
@@ -121,6 +123,11 @@ func (c Config) Validate() error {
 		errs = append(errs, "open_meteo.base_url is required")
 	} else if _, err := url.ParseRequestURI(c.OpenMeteo.BaseURL); err != nil {
 		errs = append(errs, fmt.Sprintf("open_meteo.base_url is invalid: %v", err))
+	}
+	if c.OpenMeteo.ArchiveBaseURL == "" {
+		errs = append(errs, "open_meteo.archive_base_url is required")
+	} else if _, err := url.ParseRequestURI(c.OpenMeteo.ArchiveBaseURL); err != nil {
+		errs = append(errs, fmt.Sprintf("open_meteo.archive_base_url is invalid: %v", err))
 	}
 	if c.OpenMeteo.Timezone == "" {
 		errs = append(errs, "open_meteo.timezone is required")

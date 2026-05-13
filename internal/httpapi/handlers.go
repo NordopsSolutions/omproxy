@@ -32,6 +32,7 @@ func (a *API) Router() http.Handler {
 	mux.HandleFunc("GET /healthz", a.health)
 	mux.HandleFunc("GET /api/v1/weather/hourly", a.weatherHandler("hourly"))
 	mux.HandleFunc("GET /api/v1/weather/daily", a.weatherHandler("daily"))
+	mux.HandleFunc("GET /api/v1/weather/archive", a.archiveHandler)
 	mux.HandleFunc("GET /api/v1/stats", a.statsHandler)
 	return logRequests(a.logger, mux)
 }
@@ -55,7 +56,17 @@ func (a *API) weatherHandler(kind string) http.HandlerFunc {
 		}
 		metric := query.Get("metric")
 
-		resp, err := a.weather.Get(r.Context(), kind, lat, lon, metric)
+		pastDays := 0
+		if rawPast := query.Get("past_days"); rawPast != "" {
+			parsed, perr := strconv.Atoi(rawPast)
+			if perr != nil {
+				writeJSON(w, http.StatusBadRequest, errorResponse{Error: "past_days must be an integer"})
+				return
+			}
+			pastDays = parsed
+		}
+
+		resp, err := a.weather.Get(r.Context(), kind, lat, lon, metric, pastDays)
 		if err != nil {
 			status := http.StatusInternalServerError
 			if errors.Is(err, service.ErrBadRequest) {
@@ -70,6 +81,38 @@ func (a *API) weatherHandler(kind string) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, resp)
 	}
+}
+
+func (a *API) archiveHandler(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	lat, err := parseRequiredFloat(query.Get("lat"), "lat")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	lon, err := parseRequiredFloat(query.Get("lon"), "lon")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	startDate := query.Get("start_date")
+	endDate := query.Get("end_date")
+	metric := query.Get("metric")
+
+	resp, err := a.weather.GetArchive(r.Context(), lat, lon, startDate, endDate, metric)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, service.ErrBadRequest) {
+			status = http.StatusBadRequest
+		} else if errors.Is(err, context.DeadlineExceeded) {
+			status = http.StatusGatewayTimeout
+		} else {
+			status = http.StatusBadGateway
+		}
+		writeJSON(w, status, errorResponse{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (a *API) statsHandler(w http.ResponseWriter, r *http.Request) {
